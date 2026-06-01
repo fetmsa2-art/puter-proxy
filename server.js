@@ -1,5 +1,8 @@
 import express from 'express';
-import { puter } from '@heyputer/puter.js';
+import { init } from '@heyputer/puter.js/src/init.cjs';
+
+// Initialize Puter using an Auth Token (Required for running on external servers like Render)
+const puter = init(process.env.PUTER_AUTH_TOKEN);
 
 const app = express();
 app.use(express.json());
