@@ -10,7 +10,7 @@ app.use(express.json());
 
 app.post('/v1/chat/completions', async (req, res) => {
     try {
-        const { messages, model, stream, temperature, top_p, max_tokens } = req.body;
+        const { messages, model, stream, temperature, top_p, max_tokens, tools, tool_choice } = req.body;
         
         // Use the model provided by the client, fallback to a default
         const puterModel = model || 'claude-sonnet-4-6';
@@ -34,6 +34,8 @@ app.post('/v1/chat/completions', async (req, res) => {
         if (temperature !== undefined) puterOptions.temperature = temperature;
         if (top_p !== undefined) puterOptions.top_p = top_p;
         if (max_tokens !== undefined) puterOptions.max_tokens = max_tokens;
+        if (tools) puterOptions.tools = tools;
+        if (tool_choice) puterOptions.tool_choice = tool_choice;
 
         const responseId = 'chatcmpl-' + crypto.randomUUID();
         const createdTimestamp = Math.floor(Date.now() / 1000);
@@ -56,13 +58,17 @@ app.post('/v1/chat/completions', async (req, res) => {
             res.write(`data: ${JSON.stringify(roleChunk)}\n\n`);
 
             for await (const part of response) {
-                if (part?.text) {
+                const delta = {};
+                if (part?.text) delta.content = part.text;
+                if (part?.tool_calls) delta.tool_calls = part.tool_calls;
+                
+                if (Object.keys(delta).length > 0) {
                     const chunk = {
                         id: responseId,
                         object: 'chat.completion.chunk',
                         created: createdTimestamp,
                         model: puterModel,
-                        choices: [{ index: 0, delta: { content: part.text }, finish_reason: null }]
+                        choices: [{ index: 0, delta: delta, finish_reason: null }]
                     };
                     res.write(`data: ${JSON.stringify(chunk)}\n\n`);
                 }
@@ -82,8 +88,13 @@ app.post('/v1/chat/completions', async (req, res) => {
         } else {
             const response = await puter.ai.chat(sanitizedMessages, puterOptions);
             
-            // Non-streaming response text is directly on response.message.content
-            const reply = response.message.content;
+            // Extract text and tool_calls
+            const reply = response.message.content || null;
+            const toolCalls = response.message.tool_calls || undefined;
+            const finishReason = toolCalls ? 'tool_calls' : 'stop';
+            
+            const messageObj = { role: 'assistant', content: reply };
+            if (toolCalls) messageObj.tool_calls = toolCalls;
             
             res.json({
                 id: responseId,
@@ -92,8 +103,8 @@ app.post('/v1/chat/completions', async (req, res) => {
                 model: puterModel,
                 choices: [{
                     index: 0,
-                    message: { role: 'assistant', content: reply },
-                    finish_reason: 'stop'
+                    message: messageObj,
+                    finish_reason: finishReason
                 }],
                 usage: {
                     prompt_tokens: 0,
